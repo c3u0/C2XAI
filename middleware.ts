@@ -1,6 +1,26 @@
 import { authkit } from "@workos-inc/authkit-nextjs";
 import { NextRequest, NextResponse, NextFetchEvent } from "next/server";
-import { isRateLimitError } from "@/lib/api/response";
+
+// Inlined from @/lib/api/response to avoid Edge runtime incompatibility
+function extractErrorMessage(err: unknown): string {
+  if (typeof err === "string") return err;
+  if (err && typeof err === "object" && "message" in err) {
+    return (err as any).message ?? "";
+  }
+  return "";
+}
+
+function isRateLimitError(err: unknown): boolean {
+  const normalized = extractErrorMessage(err).toLowerCase();
+  const statusCode = (err as any)?.status;
+  const causeStatusCode = (err as any)?.cause?.status;
+  return (
+    statusCode === 429 ||
+    causeStatusCode === 429 ||
+    normalized.includes("rate limit exceeded") ||
+    normalized.includes("too many requests")
+  );
+}
 
 const UNAUTHENTICATED_PATHS = new Set([
   "/",
@@ -57,7 +77,6 @@ export default async function middleware(
 ) {
   const pathname = request.nextUrl.pathname;
 
-  // Desktop app: redirect unauthenticated users to desktop-specific error page
   if (isDesktopApp(request)) {
     const hasSession = request.cookies.has("wos-session");
 
@@ -94,7 +113,6 @@ export default async function middleware(
     });
   }
 
-  // If rate-limited (not a real session expiry), don't redirect to login
   if (hadSessionCookie && refreshHitRateLimit) {
     if (!isBrowserRequest(request)) {
       const rateLimitHeaders = new Headers(responseHeaders);
@@ -104,7 +122,6 @@ export default async function middleware(
         { status: 503, headers: rateLimitHeaders },
       );
     }
-    // For browser requests, let through rather than forcing a confusing login redirect
     return NextResponse.next({
       request: { headers: requestHeaders },
       headers: responseHeaders,
@@ -156,9 +173,7 @@ function buildResponseHeaders(authkitHeaders: Headers): Headers {
 
 export const config = {
   matcher: [
-    // Skip Next.js internals and all static files, unless found in search params
     "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    // Always run for API routes
     "/(api|trpc)(.*)",
   ],
 };
