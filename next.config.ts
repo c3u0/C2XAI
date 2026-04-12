@@ -2,6 +2,11 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   devIndicators: false,
+  allowedDevOrigins: [
+    "evidence-divorcee-coherence.ngrok-free.dev",
+    "localhost",
+    "127.0.0.1",
+  ],
   images: {
     unoptimized: true,
     remotePatterns: [
