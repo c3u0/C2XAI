@@ -2,6 +2,8 @@
 
 # dependencies
 /node_modules
+# Project uses pnpm only (packageManager in package.json)
+package-lock.json
 /.pnp
 .pnp.*
 .yarn/*
