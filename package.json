@@ -2,7 +2,7 @@
   "name": "hackerai",
   "version": "0.1.0",
   "private": true,
-  "packageManager": "pnpm@10.33.0",
+  "packageManager": "pnpm@9.15.0",
   "scripts": {
     "dev": "concurrently \"next dev --turbopack\" \"npx convex dev\"",
     "dev:local": "concurrently \"next dev --turbopack\" \"npx convex dev --local\"",
