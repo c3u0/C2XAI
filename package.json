@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "concurrently \"next dev --turbopack\" \"npx convex dev\"",
     "dev:local": "concurrently \"next dev --turbopack\" \"npx convex dev --local\"",
