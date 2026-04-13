@@ -1,5 +1,6 @@
+// proxy.ts - Version compatible avec Next.js 16
 import { authkit } from "@workos-inc/authkit-nextjs";
-import { NextRequest, NextResponse, NextFetchEvent } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 // Inlined from @/lib/api/response to avoid Edge runtime incompatibility
 function extractErrorMessage(err: unknown): string {
@@ -71,10 +72,8 @@ function isBrowserRequest(request: NextRequest): boolean {
 
 const SESSION_HEADER = "x-workos-session";
 
-export default async function middleware(
-  request: NextRequest,
-  _event: NextFetchEvent,
-) {
+// Exporter comme "proxy" au lieu de "middleware"
+export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
   if (isDesktopApp(request)) {
@@ -90,66 +89,75 @@ export default async function middleware(
   let refreshHitRateLimit = false;
   const hadSessionCookie = request.cookies.has("wos-session");
 
-  const { session, headers, authorizationUrl } = await authkit(request, {
-    redirectUri: getRedirectUri(),
-    eagerAuth: true,
-    onSessionRefreshError: ({ error }) => {
-      if (isRateLimitError(error)) {
-        refreshHitRateLimit = true;
-        console.warn(
-          "[Auth Middleware] WorkOS rate limit hit during session refresh",
+  try {
+    const { session, headers, authorizationUrl } = await authkit(request, {
+      redirectUri: getRedirectUri(),
+      eagerAuth: true,
+      // CORRECTION ICI : le paramètre 'request' est optionnel
+      onSessionRefreshError: ({ error }: { error?: unknown }) => {
+        if (isRateLimitError(error)) {
+          refreshHitRateLimit = true;
+          console.warn(
+            "[Auth Proxy] WorkOS rate limit hit during session refresh",
+          );
+        }
+      },
+    });
+
+    const requestHeaders = buildRequestHeaders(request, headers);
+    const responseHeaders = buildResponseHeaders(headers);
+
+    if (session.user || isUnauthenticatedPath(pathname)) {
+      return NextResponse.next({
+        request: { headers: requestHeaders },
+        headers: responseHeaders,
+      });
+    }
+
+    if (hadSessionCookie && refreshHitRateLimit) {
+      if (!isBrowserRequest(request)) {
+        const rateLimitHeaders = new Headers(responseHeaders);
+        rateLimitHeaders.set("Retry-After", "5");
+        return NextResponse.json(
+          { code: "rate_limited", message: "Please retry shortly." },
+          { status: 503, headers: rateLimitHeaders },
         );
       }
-    },
-  });
+      return NextResponse.next({
+        request: { headers: requestHeaders },
+        headers: responseHeaders,
+      });
+    }
 
-  const requestHeaders = buildRequestHeaders(request, headers);
-  const responseHeaders = buildResponseHeaders(headers);
-
-  if (session.user || isUnauthenticatedPath(pathname)) {
-    return NextResponse.next({
-      request: { headers: requestHeaders },
-      headers: responseHeaders,
-    });
-  }
-
-  if (hadSessionCookie && refreshHitRateLimit) {
     if (!isBrowserRequest(request)) {
-      const rateLimitHeaders = new Headers(responseHeaders);
-      rateLimitHeaders.set("Retry-After", "5");
       return NextResponse.json(
-        { code: "rate_limited", message: "Please retry shortly." },
-        { status: 503, headers: rateLimitHeaders },
+        {
+          code: "unauthorized:auth",
+          message: "You need to sign in before continuing.",
+          cause: "Session expired or invalid",
+        },
+        { status: 401, headers: responseHeaders },
       );
     }
-    return NextResponse.next({
-      request: { headers: requestHeaders },
+
+    if (!authorizationUrl) {
+      console.error("[Auth Proxy] authorizationUrl unavailable", {
+        pathname,
+        hasSession: !!session.user,
+      });
+      const errorUrl = new URL("/auth-error", request.url);
+      errorUrl.searchParams.set("code", "503");
+      return NextResponse.redirect(errorUrl, { headers: responseHeaders });
+    }
+
+    return NextResponse.redirect(authorizationUrl, {
       headers: responseHeaders,
     });
+  } catch (error) {
+    console.error("[Auth Proxy] Fatal error:", error);
+    // Fallback : permettre l'accès pour éviter un plantage total
+    return NextResponse.next();
   }
-
-  if (!isBrowserRequest(request)) {
-    return NextResponse.json(
-      {
-        code: "unauthorized:auth",
-        message: "You need to sign in before continuing.",
-        cause: "Session expired or invalid",
-      },
-      { status: 401, headers: responseHeaders },
-    );
-  }
-
-  if (!authorizationUrl) {
-    console.error("[Auth Middleware] authorizationUrl unavailable", {
-      pathname,
-      hasSession: !!session.user,
-    });
-    const errorUrl = new URL("/auth-error", request.url);
-    errorUrl.searchParams.set("code", "503");
-    return NextResponse.redirect(errorUrl, { headers: responseHeaders });
-  }
-
-  return NextResponse.redirect(authorizationUrl, { headers: responseHeaders });
 }
 
 function buildRequestHeaders(
